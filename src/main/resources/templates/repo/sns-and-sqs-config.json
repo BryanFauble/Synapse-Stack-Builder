@@ -34,7 +34,8 @@
 		"GRID_REPLICA_CHANGES",
 		"GRID_SESSION",
 		"SEARCH_INDEX_SOURCE_ROW_SYNC",
-		"SEARCH_INDEX_ROW_APPLY"
+		"SEARCH_INDEX_ROW_APPLY",
+		"SEARCH_INDEX_REBUILD"
 	],
 	"snsGlobalTopicNames": [
 		"SES_SYNAPSE_ORG_BOUNCE",
@@ -570,6 +571,24 @@
 			"queueName": "SEARCH_INDEX_ROW_APPLY",
 			"subscribedTopicNames": [
 				"SEARCH_INDEX_ROW_APPLY"
+			],
+			"messageVisibilityTimeoutSec": 60,
+			"deadLetterQueueMaxFailureCount": 10,
+			"messageRetentionPeriodSec": 1209600
+		},
+		{
+			"queueName": "SEARCH_INDEX_SOURCE_UPDATE",
+			"subscribedTopicNames": [
+				"TABLE_STATUS_EVENT"
+			],
+			"messageVisibilityTimeoutSec": 60,
+			"deadLetterQueueMaxFailureCount": 10,
+			"messageRetentionPeriodSec": 1209600
+		},
+		{
+			"queueName": "SEARCH_INDEX_REBUILD",
+			"subscribedTopicNames": [
+				"SEARCH_INDEX_REBUILD"
 			],
 			"messageVisibilityTimeoutSec": 60,
 			"deadLetterQueueMaxFailureCount": 10,
