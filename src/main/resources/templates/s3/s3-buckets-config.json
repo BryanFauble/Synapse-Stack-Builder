@@ -80,6 +80,10 @@
 		},
 		{
 			"name": "${stack}.grid.snapshot.sagebase.org"
+		},
+		{
+			"name": "${stack}.searchindex.row.sync",
+			"retentionDays": 2
 		}
 	],
 	"inventoryConfig": {

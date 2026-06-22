@@ -32,7 +32,9 @@
 		"PROJECT_STORAGE_EVENT",
 		"REPLICATED_EVENT",
 		"GRID_REPLICA_CHANGES",
-		"GRID_SESSION"
+		"GRID_SESSION",
+		"SEARCH_INDEX_SOURCE_ROW_SYNC",
+		"SEARCH_INDEX_ROW_APPLY"
 	],
 	"snsGlobalTopicNames": [
 		"SES_SYNAPSE_ORG_BOUNCE",
@@ -554,6 +556,24 @@
 			],
 			"messageVisibilityTimeoutSec": 120,
 			"oldestMessageInQueueAlarmThresholdSec": 30
+		},
+		{
+			"queueName": "SEARCH_INDEX_SOURCE_ROW_SYNC",
+			"subscribedTopicNames": [
+				"SEARCH_INDEX_SOURCE_ROW_SYNC"
+			],
+			"messageVisibilityTimeoutSec": 60,
+			"deadLetterQueueMaxFailureCount": 10,
+			"messageRetentionPeriodSec": 1209600
+		},
+		{
+			"queueName": "SEARCH_INDEX_ROW_APPLY",
+			"subscribedTopicNames": [
+				"SEARCH_INDEX_ROW_APPLY"
+			],
+			"messageVisibilityTimeoutSec": 60,
+			"deadLetterQueueMaxFailureCount": 10,
+			"messageRetentionPeriodSec": 1209600
 		}
 	]
 }
