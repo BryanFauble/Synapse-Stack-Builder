@@ -758,11 +758,12 @@ public class RepositoryTemplateBuilderImplTest {
 		assertEquals("dev-101-synidx", devDomainProps.getString("DomainName"));
 		assertEquals("OpenSearch_3.5", devDomainProps.getString("EngineVersion"));
 		JSONObject devClusterConfig = devDomainProps.getJSONObject("ClusterConfig");
-		assertEquals(1, devClusterConfig.getInt("InstanceCount"));
-		assertEquals("t3.small.search", devClusterConfig.getString("InstanceType"));
-		assertFalse(devClusterConfig.getBoolean("DedicatedMasterEnabled"));
-		assertEquals(20, devDomainProps.getJSONObject("EBSOptions").getInt("VolumeSize"));
-		assertFalse(devClusterConfig.getBoolean("ZoneAwarenessEnabled"));
+		// TEMP (prod-only-test): the domain is force-rendered prod-sized for every stack.
+		assertEquals(2, devClusterConfig.getInt("InstanceCount"));
+		assertEquals("r6g.xlarge.search", devClusterConfig.getString("InstanceType"));
+		assertTrue(devClusterConfig.getBoolean("DedicatedMasterEnabled"));
+		assertEquals(100, devDomainProps.getJSONObject("EBSOptions").getInt("VolumeSize"));
+		assertTrue(devClusterConfig.getBoolean("ZoneAwarenessEnabled"));
 		assertEquals("Delete", resources.getJSONObject("SynapseSearchIndexDomain").getString("DeletionPolicy"));
 		assertTrue(devDomainProps.getJSONObject("SoftwareUpdateOptions").getBoolean("AutoSoftwareUpdateEnabled"));
 		assertTrue(

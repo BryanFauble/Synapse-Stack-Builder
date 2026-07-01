@@ -42,8 +42,10 @@
 		"Properties": {
 			"DomainName": "${stack}-${instance}-synidx",
 			"EngineVersion": "OpenSearch_3.5",
+			## TEMP (prod-only-test): force prod-sized cluster/EBS for every stack so the build
+			## test exercises the prod shape. The network conditionals (public dev, VPC prod)
+			## are intentionally left intact. Do not merge — revert before merging to develop.
 			"ClusterConfig":
-				#if (${stack} == 'prod')
 				{
 					"InstanceType": "r6g.xlarge.search",
 					"InstanceCount": 2,
@@ -53,19 +55,11 @@
 					"DedicatedMasterType": "m6g.large.search",
 					"DedicatedMasterCount": 3
 				}
-				#else
-				{
-					"InstanceType": "t3.small.search",
-					"InstanceCount": 1,
-					"ZoneAwarenessEnabled": false,
-					"DedicatedMasterEnabled": false
-				}
-				#end
 			,
 			"EBSOptions": {
 				"EBSEnabled": true,
 				"VolumeType": "gp3",
-				"VolumeSize": #if (${stack} == 'prod') 100 #else 20 #end
+				"VolumeSize": 100
 			},
 			"EncryptionAtRestOptions": {
 				"Enabled": true
