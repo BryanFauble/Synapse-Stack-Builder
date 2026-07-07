@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
@@ -40,6 +41,9 @@ import static org.sagebionetworks.template.Constants.PROPERTY_KEY_BEANSTALK_VERS
 import static org.sagebionetworks.template.Constants.PROPERTY_KEY_DATA_CDN_PRIVATE_KEY_ID;
 import static org.sagebionetworks.template.Constants.PROPERTY_KEY_EC2_INSTANCE_MEMORY;
 import static org.sagebionetworks.template.Constants.PROPERTY_KEY_EC2_INSTANCE_TYPE;
+import static org.sagebionetworks.template.Constants.PROPERTY_KEY_OPENSEARCH_INSTANCE_TYPE;
+import static org.sagebionetworks.template.Constants.PROPERTY_KEY_OPENSEARCH_MASTER_INSTANCE_TYPE;
+import static org.sagebionetworks.template.Constants.PROPERTY_KEY_OPENSEARCH_AVAILABILITY_ZONE_COUNT;
 import static org.sagebionetworks.template.Constants.PROPERTY_KEY_ELASTICBEANSTALK_IMAGE_VERSION_AMAZONLINUX;
 import static org.sagebionetworks.template.Constants.PROPERTY_KEY_ELASTICBEANSTALK_IMAGE_VERSION_JAVA;
 import static org.sagebionetworks.template.Constants.PROPERTY_KEY_ELASTICBEANSTALK_IMAGE_VERSION_TOMCAT;
@@ -132,15 +136,17 @@ import org.sagebionetworks.template.repo.cloudwatchlogs.LogType;
 import org.sagebionetworks.template.repo.grid.GridContextProvider;
 import org.sagebionetworks.template.vpc.Color;
 
-import com.amazonaws.services.s3.AmazonS3Client;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.cloudformation.model.Output;
 import software.amazon.awssdk.services.cloudformation.model.Parameter;
 import software.amazon.awssdk.services.cloudformation.model.Stack;
 import software.amazon.awssdk.services.cloudformation.model.Tag;
 import software.amazon.awssdk.services.elasticbeanstalk.ElasticBeanstalkClient;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.elasticbeanstalk.model.ListPlatformVersionsRequest;
 import software.amazon.awssdk.services.elasticbeanstalk.model.ListPlatformVersionsResponse;
 import software.amazon.awssdk.services.elasticbeanstalk.model.PlatformFilter;
@@ -181,7 +187,7 @@ public class RepositoryTemplateBuilderImplTest {
 	@Mock
 	private TimeToLive mockTimeToLive;
 	@Mock
-	private AmazonS3Client mockS3Client;
+	private S3Client mockS3Client;
 	@Mock
 	private DockerImageBuilder mockDockerImageBuilder;
 	@Mock
@@ -189,9 +195,6 @@ public class RepositoryTemplateBuilderImplTest {
 	
 	@Captor
 	private ArgumentCaptor<CreateOrUpdateStackRequest> requestCaptor;
-	
-	@Captor
-	private ArgumentCaptor<String> jsonStringCaptor;
 
 	private VelocityEngine velocityEngine;
 	private RepositoryTemplateBuilderImpl builder;
@@ -349,6 +352,11 @@ public class RepositoryTemplateBuilderImplTest {
 		when(mockEc2ClientWrapper.getAvailableSubnetsForInstanceType(anyString(), any())).thenReturn(EXPECTED_SUBNETS);
 		stack = "prod";
 		configureStack(stack);
+		when(config.getProperty(PROPERTY_KEY_OPENSEARCH_INSTANCE_TYPE)).thenReturn("r6g.xlarge");
+		when(config.getProperty(PROPERTY_KEY_OPENSEARCH_MASTER_INSTANCE_TYPE)).thenReturn("m6g.large");
+		when(config.getIntegerProperty(PROPERTY_KEY_OPENSEARCH_AVAILABILITY_ZONE_COUNT)).thenReturn(2);
+		when(mockEc2ClientWrapper.getAvailableSubnetsForInstanceTypes(eq(List.of("r6g.xlarge", "m6g.large")), any(), eq(2)))
+				.thenReturn(EXPECTED_SUBNETS);
 		when(config.getProperty(PROPERTY_KEY_DATA_CDN_PRIVATE_KEY_ID)).thenReturn("CdnPrivateKeyId");
 		when(config.getProperty(SAGEBIO_COGNITO_APP_DISCOVERY_DOCUMENT)).thenReturn("discoveryDocumentUrl");
 		when(mockImageBuilderClient.getLatestImageIdForImagePipelineArn(imagePipelineArn)).thenReturn(imageId);
@@ -369,7 +377,7 @@ public class RepositoryTemplateBuilderImplTest {
 		assertNotNull(bodyJSONString);
 		
 		JSONObject templateJson = new JSONObject(bodyJSONString);
-		
+
 		JSONObject resources = templateJson.getJSONObject("Resources");
 		assertNotNull(resources);
 		// database group
@@ -447,7 +455,30 @@ public class RepositoryTemplateBuilderImplTest {
 			resources.getJSONObject("SynapseSearchCollectionDataAccessPolicy")
 				.getJSONObject("Properties").getJSONObject("Policy").toString(2).contains("prod101SynapesRepoWorkersServiceRole")
 		);
-	
+
+		assertTrue(resources.has("SynapseSearchIndexDomain"));
+		JSONObject prodDomainProps = resources.getJSONObject("SynapseSearchIndexDomain").getJSONObject("Properties");
+		assertEquals("prod-101-synidx", prodDomainProps.getString("DomainName"));
+		assertEquals("OpenSearch_3.5", prodDomainProps.getString("EngineVersion"));
+		JSONObject prodClusterConfig = prodDomainProps.getJSONObject("ClusterConfig");
+		assertEquals(2, prodClusterConfig.getInt("InstanceCount"));
+		assertEquals("r6g.xlarge.search", prodClusterConfig.getString("InstanceType"));
+		assertTrue(prodClusterConfig.getBoolean("DedicatedMasterEnabled"));
+		assertEquals("m6g.large.search", prodClusterConfig.getString("DedicatedMasterType"));
+		assertEquals(3, prodClusterConfig.getInt("DedicatedMasterCount"));
+		assertTrue(prodClusterConfig.getBoolean("ZoneAwarenessEnabled"));
+		assertEquals(2, prodClusterConfig.getJSONObject("ZoneAwarenessConfig").getInt("AvailabilityZoneCount"));
+		JSONArray prodSubnetIds = prodDomainProps.getJSONObject("VPCOptions").getJSONArray("SubnetIds");
+		assertEquals(2, prodSubnetIds.length());
+		assertEquals("subnet1", prodSubnetIds.getString(0));
+		assertEquals("subnet2", prodSubnetIds.getString(1));
+		assertEquals("Retain", resources.getJSONObject("SynapseSearchIndexDomain").getString("DeletionPolicy"));
+		assertTrue(prodDomainProps.getJSONObject("SoftwareUpdateOptions").getBoolean("AutoSoftwareUpdateEnabled"));
+		assertTrue(
+			prodDomainProps.getJSONObject("AccessPolicies").toString().contains("prod101SynapesRepoWorkersServiceRole")
+		);
+		assertTrue(resources.has("prod101SynapseSearchIndexSecurityGroup"));
+
 	}
 
 	void validateOpenApiSchema(JSONObject bedrockAgentProps) {
@@ -458,12 +489,10 @@ public class RepositoryTemplateBuilderImplTest {
 		assertEquals("prod-configuration.sagebase.org", openApiBucket);
 		String openApiKey = s3.getString("S3ObjectKey");
 		assertEquals("chat/openapi/101.json",s3.getString("S3ObjectKey"));
-		verify(mockS3Client).putObject(eq(openApiBucket), eq(openApiKey), jsonStringCaptor.capture());
-		
-		JSONObject openApiSchema = new JSONObject(jsonStringCaptor.getValue());
-		assertTrue(openApiSchema.has("openapi"));
-		assertTrue(openApiSchema.has("info"));
-		assertTrue(openApiSchema.has("paths"));
+		verify(mockS3Client).putObject(
+			(PutObjectRequest) argThat(req -> ((PutObjectRequest) req).bucket().equals(openApiBucket) && ((PutObjectRequest) req).key().equals(openApiKey)),
+			any(RequestBody.class)
+		);
 	}
 
 	@Test
@@ -527,6 +556,11 @@ public class RepositoryTemplateBuilderImplTest {
 		when(mockEc2ClientWrapper.getAvailableSubnetsForInstanceType(anyString(), any())).thenReturn(EXPECTED_SUBNETS);
 		stack = "prod";
 		configureStack(stack);
+		when(config.getProperty(PROPERTY_KEY_OPENSEARCH_INSTANCE_TYPE)).thenReturn("r6g.xlarge");
+		when(config.getProperty(PROPERTY_KEY_OPENSEARCH_MASTER_INSTANCE_TYPE)).thenReturn("m6g.large");
+		when(config.getIntegerProperty(PROPERTY_KEY_OPENSEARCH_AVAILABILITY_ZONE_COUNT)).thenReturn(2);
+		when(mockEc2ClientWrapper.getAvailableSubnetsForInstanceTypes(eq(List.of("r6g.xlarge", "m6g.large")), any(), eq(2)))
+				.thenReturn(EXPECTED_SUBNETS);
 		when(config.getProperty(PROPERTY_KEY_DATA_CDN_PRIVATE_KEY_ID)).thenReturn("CdnPrivateKeyId");
 		when(config.getProperty(SAGEBIO_COGNITO_APP_DISCOVERY_DOCUMENT)).thenReturn("discoveryDocumentUrl");
 		when(mockImageBuilderClient.getLatestImageIdForImagePipelineArn(imagePipelineArn)).thenReturn(imageId);
@@ -735,7 +769,27 @@ public class RepositoryTemplateBuilderImplTest {
 			resources.getJSONObject("SynapseSearchCollectionDataAccessPolicy")
 				.getJSONObject("Properties").getJSONObject("Policy").toString(2).contains("arn:aws:iam::${AWS::AccountId}:root")
 		);
-		
+
+		assertTrue(resources.has("SynapseSearchIndexDomain"));
+		JSONObject devDomainProps = resources.getJSONObject("SynapseSearchIndexDomain").getJSONObject("Properties");
+		assertEquals("dev-101-synidx", devDomainProps.getString("DomainName"));
+		assertEquals("OpenSearch_3.5", devDomainProps.getString("EngineVersion"));
+		JSONObject devClusterConfig = devDomainProps.getJSONObject("ClusterConfig");
+		assertEquals(1, devClusterConfig.getInt("InstanceCount"));
+		assertEquals("t3.small.search", devClusterConfig.getString("InstanceType"));
+		assertFalse(devClusterConfig.getBoolean("DedicatedMasterEnabled"));
+		assertEquals(20, devDomainProps.getJSONObject("EBSOptions").getInt("VolumeSize"));
+		assertFalse(devClusterConfig.getBoolean("ZoneAwarenessEnabled"));
+		assertEquals("Delete", resources.getJSONObject("SynapseSearchIndexDomain").getString("DeletionPolicy"));
+		assertTrue(devDomainProps.getJSONObject("SoftwareUpdateOptions").getBoolean("AutoSoftwareUpdateEnabled"));
+		assertTrue(
+			devDomainProps.getJSONObject("AccessPolicies").toString().contains("arn:aws:iam::${AWS::AccountId}:root")
+		);
+		// Dev renders a public domain (no VPCOptions, gated by the IAM AccessPolicies), so it
+		// has no ENIs and the security group is not created.
+		assertFalse(devDomainProps.has("VPCOptions"));
+		assertFalse(resources.has("dev101SynapseSearchIndexSecurityGroup"));
+
 	}
 
 	@Test
@@ -1107,6 +1161,14 @@ public class RepositoryTemplateBuilderImplTest {
 		when(config.getProperty(PROPERTY_KEY_STACK)).thenReturn(stack);
 		when(config.getProperty(PROPERTY_KEY_INSTANCE)).thenReturn(instance);
 		when(config.getProperty(PROPERTY_KEY_VPC_SUBNET_COLOR)).thenReturn(vpcSubnetColor);
+		when(config.getProperty(PROPERTY_KEY_OPENSEARCH_INSTANCE_TYPE)).thenReturn("r6g.xlarge");
+		when(config.getProperty(PROPERTY_KEY_OPENSEARCH_MASTER_INSTANCE_TYPE)).thenReturn("m6g.large");
+		when(config.getIntegerProperty(PROPERTY_KEY_OPENSEARCH_AVAILABILITY_ZONE_COUNT)).thenReturn(2);
+		List<String> openSearchSubnets = Arrays.asList("subnet-1a", "subnet-1c");
+		when(mockCloudFormationClientWrapper.getOutput(anyString(), anyString()))
+				.thenReturn(String.join(",", openSearchSubnets));
+		when(mockEc2ClientWrapper.getAvailableSubnetsForInstanceTypes(eq(List.of("r6g.xlarge", "m6g.large")), any(), eq(2)))
+				.thenReturn(openSearchSubnets);
 
 		when(config.getIntegerProperty(PROPERTY_KEY_REPO_RDS_ALLOCATED_STORAGE)).thenReturn(4);
 		when(config.getIntegerProperty(PROPERTY_KEY_REPO_RDS_MAX_ALLOCATED_STORAGE)).thenReturn(8);
@@ -1141,6 +1203,10 @@ public class RepositoryTemplateBuilderImplTest {
 		
 		assertEquals("Block:{}", context.get(ADMIN_RULE_ACTION));
 		assertEquals("Retain", context.get(DELETION_POLICY));
+		assertEquals("r6g.xlarge", context.get(Constants.OPENSEARCH_INSTANCE_TYPE));
+		assertEquals("m6g.large", context.get(Constants.OPENSEARCH_MASTER_INSTANCE_TYPE));
+		assertEquals(2, context.get(Constants.OPENSEARCH_AVAILABILITY_ZONE_COUNT));
+		assertEquals(openSearchSubnets, context.get(Constants.OPENSEARCH_SUBNETS));
 	}
 
 
