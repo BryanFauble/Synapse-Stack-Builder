@@ -125,6 +125,7 @@ import org.sagebionetworks.template.repo.beanstalk.ssl.TargetGroup;
 import org.sagebionetworks.template.repo.cloudwatchlogs.CloudwatchLogsVelocityContextProvider;
 import org.sagebionetworks.template.repo.ecs.DockerImageBuilder;
 import org.sagebionetworks.template.repo.ecs.EcsEnvironmentDescriptor;
+import org.sagebionetworks.template.repo.search.SemanticEmbeddingBuilder;
 
 import com.google.inject.Inject;
 
@@ -158,6 +159,7 @@ public class RepositoryTemplateBuilderImpl implements RepositoryTemplateBuilder 
 	private final TimeToLive timeToLive;
 	private final DockerImageBuilder dockerImageBuilder;
 	private final LoadBalancerAlarmsConfig loadBalancerAlarmsConfig;
+	private final SemanticEmbeddingBuilder semanticEmbeddingBuilder;
 
 	@Inject
 	public RepositoryTemplateBuilderImpl(CloudFormationClientWrapper cloudFormationClientWrapper, VelocityEngine velocityEngine,
@@ -166,7 +168,8 @@ public class RepositoryTemplateBuilderImpl implements RepositoryTemplateBuilder 
                                          ElasticBeanstalkSolutionStackNameProvider elasticBeanstalkDefaultAMIEncrypter,
                                          StackTagsProvider stackTagsProvider, CloudwatchLogsVelocityContextProvider cloudwatchLogsVelocityContextProvider,
                                          Ec2ClientWrapper ec2ClientWrapper, ElasticBeanstalkClient beanstalkClient, ImageBuilderClient imageBuilderClient, TimeToLive ttl,
-                                         DockerImageBuilder dockerImageBuilder, LoadBalancerAlarmsConfig loadBalancerAlarmsConfig) {
+                                         DockerImageBuilder dockerImageBuilder, LoadBalancerAlarmsConfig loadBalancerAlarmsConfig,
+                                         SemanticEmbeddingBuilder semanticEmbeddingBuilder) {
 		super();
 		this.cloudFormationClientWrapper = cloudFormationClientWrapper;
 		this.ec2ClientWrapper = ec2ClientWrapper;
@@ -184,6 +187,7 @@ public class RepositoryTemplateBuilderImpl implements RepositoryTemplateBuilder 
 		this.timeToLive = ttl;
 		this.dockerImageBuilder = dockerImageBuilder;
 		this.loadBalancerAlarmsConfig = loadBalancerAlarmsConfig;
+		this.semanticEmbeddingBuilder = semanticEmbeddingBuilder;
 	}
 
 	public String getActualBeanstalkAmazonLinuxPlatform() {
@@ -220,7 +224,11 @@ public class RepositoryTemplateBuilderImpl implements RepositoryTemplateBuilder 
 		buildAndDeployStack(context, sharedResourceStackName, TEMPLATE_SHARED_RESOURCES_MAIN_JSON_VTP, sharedParameters);
 		// Wait for the shared resources to complete
 		Stack sharedStackResults = cloudFormationClientWrapper.waitForStackToComplete(sharedResourceStackName).orElseThrow(()->new IllegalStateException("Stack does not exist: "+sharedResourceStackName));
-				
+
+		// The OpenSearch domain now exists, so register its embedding model before any repository
+		// instance starts looking for one.
+		semanticEmbeddingBuilder.buildSemanticEmbedding();
+
 		// Build each bean stalk environment.
 		List<String> environmentNames = buildEnvironments(sharedStackResults);
 	}
