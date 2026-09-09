@@ -130,7 +130,7 @@ public class SemanticEmbeddingBuilder {
 	 */
 	private void awaitDeployed(String host, String modelId) throws InterruptedException {
 		for (int attempt = 0; attempt < DEPLOY_POLL_ATTEMPTS; attempt++) {
-			String state = post(host, "/_plugins/_ml/models/" + modelId + "/_search",
+			String state = post(host, "/_plugins/_ml/models/_search",
 					"{\"size\":1,\"query\":{\"ids\":{\"values\":[\"" + modelId + "\"]}}}")
 							.path("hits").path("hits").path(0).path("_source").path("model_state").asText();
 			if ("DEPLOYED".equals(state)) {
