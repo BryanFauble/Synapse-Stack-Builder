@@ -12,7 +12,9 @@ import static org.mockito.Mockito.when;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,8 +60,12 @@ public class SemanticEmbeddingBuilderTest {
 
 	private final AwsCredentialsProvider credentialsProvider = () -> AwsBasicCredentials.create("id", "secret");
 
-	/** Response body keyed by request path, and the paths actually requested in order. */
-	private Map<String, String> responseByPath;
+	/**
+	 * Responses queued by request path, and the paths actually requested in order. A path with more
+	 * than one queued response (e.g. a models search hit before and after a deploy) is drained in
+	 * order; a path with exactly one keeps returning it, matching a real poll loop.
+	 */
+	private Map<String, Deque<Stub>> responseByPath;
 	private List<String> requestedPaths;
 	private List<String> requestBodies;
 
@@ -87,7 +93,7 @@ public class SemanticEmbeddingBuilderTest {
 		respond("/_plugins/_ml/connectors/_create", "{\"connector_id\":\"connector-1\"}");
 		respond("/_plugins/_ml/models/_register", "{\"model_id\":\"model-1\"}");
 		respond("/_plugins/_ml/models/model-1/_deploy", "{\"task_id\":\"task-1\"}");
-		respond("/_plugins/_ml/models/model-1/_search", hit("model-1", "\"model_state\":\"DEPLOYED\""));
+		respond("/_plugins/_ml/models/_search", hit("model-1", "\"model_state\":\"DEPLOYED\""));
 
 		// call under test
 		builder.buildSemanticEmbedding();
@@ -95,7 +101,7 @@ public class SemanticEmbeddingBuilderTest {
 		assertEquals(List.of("/_plugins/_ml/models/_search", "/_plugins/_ml/model_groups/_search",
 				"/_plugins/_ml/model_groups/_register", "/_plugins/_ml/connectors/_search",
 				"/_plugins/_ml/connectors/_create", "/_plugins/_ml/models/_register",
-				"/_plugins/_ml/models/model-1/_deploy", "/_plugins/_ml/models/model-1/_search"), requestedPaths);
+				"/_plugins/_ml/models/model-1/_deploy", "/_plugins/_ml/models/_search"), requestedPaths);
 
 		// The connector must name the role the domain template creates, and carry the model/dimension
 		// the repository validates its indexes against.
@@ -132,7 +138,7 @@ public class SemanticEmbeddingBuilderTest {
 				hit("connector-existing", "\"name\":\"synapse-semantic-embedding-bedrock\""));
 		respond("/_plugins/_ml/models/_register", "{\"model_id\":\"model-2\"}");
 		respond("/_plugins/_ml/models/model-2/_deploy", "{}");
-		respond("/_plugins/_ml/models/model-2/_search", hit("model-2", "\"model_state\":\"DEPLOYED\""));
+		respond("/_plugins/_ml/models/_search", hit("model-2", "\"model_state\":\"DEPLOYED\""));
 
 		// call under test
 		builder.buildSemanticEmbedding();
@@ -221,34 +227,41 @@ public class SemanticEmbeddingBuilderTest {
 			requestedUris.add(request.httpRequest().getUri().toString());
 			requestBodies.add(readRequestBody(request));
 
-			String body = responseByPath.get(path);
-			if (body == null) {
+			Deque<Stub> stubs = responseByPath.get(path);
+			if (stubs == null || stubs.isEmpty()) {
 				throw new IllegalStateException("No stubbed response for " + path);
 			}
-			int status = statusByPath.getOrDefault(path, 200);
+			Stub stub = stubs.size() > 1 ? stubs.poll() : stubs.peek();
 			ExecutableHttpRequest executable = mock(ExecutableHttpRequest.class);
 			when(executable.call()).thenReturn(HttpExecuteResponse.builder()
-					.response(SdkHttpResponse.builder().statusCode(status).build())
-					.responseBody(AbortableInputStream.create(toStream(body)))
+					.response(SdkHttpResponse.builder().statusCode(stub.status).build())
+					.responseBody(AbortableInputStream.create(toStream(stub.body)))
 					.build());
 			return executable;
 		});
 	}
 
-	private final Map<String, Integer> statusByPath = new HashMap<>();
+	private static final class Stub {
+		private final String body;
+		private final int status;
+
+		private Stub(String body, int status) {
+			this.body = body;
+			this.status = status;
+		}
+	}
 
 	private void respond(String path, String body) {
-		responseByPath.put(path, body);
+		responseByPath.computeIfAbsent(path, p -> new ArrayDeque<>()).add(new Stub(body, 200));
 	}
 
 	private void respondNotFound(String path) {
-		responseByPath.put(path, "{\"error\":\"index_not_found_exception\"}");
-		statusByPath.put(path, 404);
+		responseByPath.computeIfAbsent(path, p -> new ArrayDeque<>())
+				.add(new Stub("{\"error\":\"index_not_found_exception\"}", 404));
 	}
 
 	private void respondWithStatus(String path, int status, String body) {
-		responseByPath.put(path, body);
-		statusByPath.put(path, status);
+		responseByPath.computeIfAbsent(path, p -> new ArrayDeque<>()).add(new Stub(body, status));
 	}
 
 	private static String hit(String id, String source) {
